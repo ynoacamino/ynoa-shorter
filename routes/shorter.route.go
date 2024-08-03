@@ -2,129 +2,139 @@ package routes
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/ynoacamino/ynoa-shorter/db"
-	"github.com/ynoacamino/ynoa-shorter/models"
 )
 
 func CreateShorter(w http.ResponseWriter, r *http.Request) {
-	var link models.Link
-	json.NewDecoder(r.Body).Decode(&link)
+	var url db.Url
 
-	if !isLink(link) {
-		throwBadRequest(w, errors.New("invalid link"))
-		return
-	}
-
-	createdUser := db.DB.Create(&link)
-
-	err := createdUser.Error
+	err := json.NewDecoder(r.Body).Decode(&url)
 	if err != nil {
-		throwBadRequest(w, err)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	json.NewEncoder(w).Encode(&link)
+	query, err := db.Query.CreateShorter(r.Context(), db.CreateShorterParams{
+		ShortUrl:    url.ShortUrl,
+		OriginalUrl: url.OriginalUrl,
+		UserID:      url.UserID,
+		Public:      url.Public,
+	})
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	json.NewEncoder(w).Encode(query)
 }
 
 func GetPublicShorters(w http.ResponseWriter, r *http.Request) {
-	var links []models.Link
-
-	query := db.DB.Where(&models.Link{Public: true}).Find(&links)
-	err := query.Error
+	query, err := db.Query.GetPublicShorters(r.Context())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
 	}
 
-	json.NewEncoder(w).Encode(&links)
+	json.NewEncoder(w).Encode(query)
 }
 
 func GetPrivateShorters(w http.ResponseWriter, r *http.Request) {
-	var links []models.Link
+	var url db.Url
 
-	var userLink struct {
-		UserId string `json:"userId"`
+	err := json.NewDecoder(r.Body).Decode(&url)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
 	}
 
-	json.NewDecoder(r.Body).Decode(&userLink)
+	if url.UserID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("User ID is required"))
+		return
+	}
 
-	query := db.DB.Where(&models.Link{UserId: userLink.UserId}).Find(&links)
-	err := query.Error
+	query, err := db.Query.GetPrivateShorters(r.Context(), url.UserID)
+
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
 	}
 
-	json.NewEncoder(w).Encode(&links)
+	json.NewEncoder(w).Encode(query)
 }
 
 func DeleteShorter(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 
-	linkId := params["id"]
-
-	if linkId == "" {
-		throwBadRequest(w, errors.New("invalid link"))
-		return
-	}
-
-	var link models.Link
-	query := db.DB.Unscoped().Delete(&link, linkId)
-	err := query.Error
+	param, err := strconv.Atoi(params["id"])
 	if err != nil {
-		throwBadRequest(w, err)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	json.NewEncoder(w).Encode(&link)
+	urlID := int32(param)
+
+	query, err := db.Query.DeleteShorter(r.Context(), urlID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	json.NewEncoder(w).Encode(query)
 }
 
 func UpdateShorter(w http.ResponseWriter, r *http.Request) {
-	var link models.Link
-	json.NewDecoder(r.Body).Decode(&link)
+	params := mux.Vars(r)
 
-	if !isLink(link) {
-		throwBadRequest(w, errors.New("invalid link"))
-		return
-	}
-
-	query := db.DB.Save(&link)
-	err := query.Error
+	param, err := strconv.Atoi(params["id"])
 	if err != nil {
-		throwBadRequest(w, err)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
 		return
 	}
 
-	json.NewEncoder(w).Encode(&link)
+	urlID := int32(param)
+
+	var url db.Url
+
+	err = json.NewDecoder(r.Body).Decode(&url)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	query, err := db.Query.UpdateShorter(r.Context(), db.UpdateShorterParams{
+		UrlID:    urlID,
+		ShortUrl: url.ShortUrl,
+		Public:   url.Public,
+	})
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	json.NewEncoder(w).Encode(query)
 }
 
 func SetUpShorterRoutes(router *mux.Router) {
-	router.HandleFunc("/link/public", GetPublicShorters).Methods("GET")
-	router.HandleFunc("/link", GetPrivateShorters).Methods("GET")
-	router.HandleFunc("/link", CreateShorter).Methods("POST")
-	router.HandleFunc("/link/{id}", UpdateShorter).Methods("PUT")
-	router.HandleFunc("/link/{id}", DeleteShorter).Methods("DELETE")
-}
-
-func isLink(link models.Link) bool {
-	if len(link.Real) < 4 {
-		return false
-	}
-
-	if len(link.UserId) == 0 {
-		return false
-	}
-
-	return true
-}
-
-func throwBadRequest(w http.ResponseWriter, err error) {
-	w.WriteHeader(http.StatusBadRequest)
-	w.Write([]byte(err.Error()))
+	router.HandleFunc("/public", GetPublicShorters).Methods("GET")
+	router.HandleFunc("/", GetPrivateShorters).Methods("GET")
+	router.HandleFunc("/", CreateShorter).Methods("POST")
+	router.HandleFunc("/{id}", UpdateShorter).Methods("PUT")
+	router.HandleFunc("/{id}", DeleteShorter).Methods("DELETE")
 }

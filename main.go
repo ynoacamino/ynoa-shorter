@@ -10,8 +10,8 @@ import (
 )
 
 func main() {
-	db.DBconnection()
-	db.DBMigrate()
+	db.InitDBConnection()
+	defer db.CloseDBConnection()
 
 	app := mux.NewRouter()
 
